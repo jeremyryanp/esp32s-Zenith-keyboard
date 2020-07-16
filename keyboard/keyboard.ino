@@ -1,8 +1,10 @@
 #include <BleMKeyboard.h>
+#include "KEYMAP.h"
 
 BleMKeyboard bleKeyboard("Zenith Keyboard", "Penntech customs", 100);
 
 #define TEST_MODE false
+#define batteryPin 32
 #define capsLockPin 23
 #define numLockPin 15
 #define addr0 17
@@ -11,7 +13,7 @@ BleMKeyboard bleKeyboard("Zenith Keyboard", "Penntech customs", 100);
 #define demuxBank 18
 #define ROWS 12
 #define COLS 8
-int readPin[] = {36, 39, 34, 35, 32, 33, 25, 26};
+int readPin[] = {36, 39, 34, 35, 22, 33, 25, 26};
 
 byte key[ROWS][COLS];
 byte skey[ROWS][COLS];
@@ -26,8 +28,8 @@ boolean capsLock = false;
 boolean numLock = false;
 boolean scrollLock = false;
 boolean scrollFlash = true;
-boolean initLocks = true;
 byte pinValue;
+boolean startFlash = true;
 
 unsigned long previousMillis = 0;
 unsigned long mouseMillis = 0;
@@ -35,70 +37,45 @@ long interval = 500;
 long mouseInterval = 50;
 int mouseFactor = 10;
 
-const uint8_t KEY_CODE_MAP[12][8] = {
-  { KEY_F7,  KEY_F8,  KEY_F9,  KEY_F10, 136 + 83, 0x47, '\347', '\350'},
-  {'\351', '\336', '\344', '\345', '\346', '\337', '\341', '\342'},
-  {'\343', '\340', '\353', '\340', 0x00, 0x00, 0x00, 0x00},
-  {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-  {'f', 'g', 'h', 'j', 'k', 'l', ';', '\''},//the last one is ' but idk if this is correct
-  {'`', KEY_LEFT_SHIFT , '\134', 'z', 'x', 'c', 'v', 'b'}, //134 should be
-  {'n', 'm', '<', '>', '?', KEY_RIGHT_SHIFT, 0x46, KEY_LEFT_ALT},
-  {' ' , KEY_CAPS_LOCK , KEY_F1 , KEY_F2,  KEY_F3 , KEY_F4 , KEY_F5, KEY_F6},
-  {KEY_ESC, '1', '2', '3', '4', '5', '6', '7'},
-  {'8', '9', '0', '-', '=', KEY_BACKSPACE, KEY_TAB, 'q'},
-  {'w', 'e', 'r', 't', 'y', 'u', 'i', 'o'},
-  {'p', '{', '}', KEY_RETURN, KEY_LEFT_CTRL, 'a', 's', 'd'}
-};
-const int SCROLL_MAP[12][8] = {
-  {0, 0, 0, 0, 0, 0, 1, 1},
-  {1, 1, 1, 1, 1, 1, 1, 1},
-  {1, 1, 1, 1, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0},
-  {0, 0, 0, 0, 0, 0, 0, 0}
-};
+uint8_t ledStatusStored;
+
 
 void setup() {
   Serial.begin(115200);
 
+  initGPIOPins();
+  initKeyArray();
+
+  bleKeyboard.begin();
+
+  initializeConnection();
+}
+
+void initGPIOPins() {
   pinMode(capsLockPin, OUTPUT);
   pinMode(numLockPin, OUTPUT);
   pinMode(addr0, OUTPUT);
   pinMode(addr1, OUTPUT);
   pinMode(demuxChip, OUTPUT);
   pinMode(demuxBank, OUTPUT);
-
-  for (int i = 0; i < sizeof(readPin) / sizeof(readPin[0]); i++) {
-    //    pinMode(readPin[i], INPUT);
-    pinMode(readPin[i], INPUT_PULLUP);
-  }
-
-  initArray();
-
-  bleKeyboard.begin();
-
 }
 
 void loop() {
-  if (bleKeyboard.isConnected()) {
-    if (initLocks)
-      initializeConnection();
-
-    readArray();
+  if (!bleKeyboard.isConnected()) {
+    initializeConnection();
   } else {
-    initLocks = true;
+    readArray();
+    checkMouseMode();
+    checkLedStatus();
   }
+}
 
-
+// Mouse mode uses the scroll lock key to use the numpad as a crude mouse
+void checkMouseMode() {
   unsigned long currentMillis = millis();
-  if (scrollLock) {
-    if (currentMillis - previousMillis > interval) {
+  if (currentMillis - previousMillis > interval) {
+    //flash scroll lock for mouse mode
+    if (scrollLock) {
       digitalWrite(numLockPin, scrollFlash);
       scrollFlash = !scrollFlash;
       previousMillis = currentMillis;
@@ -106,13 +83,55 @@ void loop() {
   }
 }
 
-void initializeConnection() {
-  Serial.println("------------------------------");
-  Serial.println("connected");
-  Serial.println();
-  Serial.println("------------------------------");
+/* bit 0 - NUM LOCK   bit 1 - CAPS LOCK   bit 2 - SCROLL LOCK*/
+void checkLedStatus() {
+  uint8_t tmp = bleKeyboard.getLedStatus();
+  if (tmp != ledStatusStored) {
+    numLock = tmp & (1 << 0);
+    if (!scrollLock) {
+      digitalWrite(numLockPin, numLock);
+    }
 
-  initLocks = false;
+    capsLock = tmp & (1 << 1);
+    digitalWrite(capsLockPin, capsLock);
+    ledStatusStored = tmp;
+  }
+}
+
+int getBatteryPct() {
+  int sensorValue = analogRead(batteryPin);
+  float voltage = (sensorValue * (3.3 / 4095.0) - 1.2) * 2; //Convert to true voltage
+  int percentage = map(voltage , 3.27, 4.20 , 0 , 100);
+
+  if (voltage < 3.3) {
+    return 0;
+  } else if (voltage > 4.2) {
+    return 100;
+  }
+
+  return percentage;
+}
+
+void checkBattery() {
+  if (bleKeyboard.isConnected()) {
+    bleKeyboard.setBatteryLevel(getBatteryPct());
+  }
+}
+
+//flash the leds
+void initializeConnection() {
+  unsigned long currentMillis = millis();
+  while (!bleKeyboard.isConnected()) {
+    if (currentMillis - previousMillis > 100) {
+      digitalWrite(numLockPin, scrollFlash);
+      digitalWrite(capsLockPin, scrollFlash);
+      scrollFlash = !scrollFlash;
+      previousMillis = currentMillis;
+    }
+  }
+  
+  checkBattery();
+  checkLedStatus();
 }
 
 void readArray() {
@@ -148,10 +167,14 @@ void readArray() {
             if (pinValue == LOW) {
               scrollLock = !scrollLock;
               if (!scrollLock) {
-                digitalWrite(numLockPin, LOW);
+                digitalWrite(numLockPin, numLock);
               }
             }
           } else {
+            //pressing numlock overrides mode mode
+            if(r == 0 && c == 4){
+              scrollLock = false;
+            }
             if (pinValue == LOW) {
               bleKeyboard.press(KEY_CODE_MAP[r][c]);
             } else if (pinValue == HIGH) {
@@ -164,19 +187,19 @@ void readArray() {
   }
 }
 
-void handleClick(int r, int c) { 
+void handleClick(int r, int c) {
   //LEFT CLICK
   if (r == 2 && c == 1) {
     if (pinValue == LOW) {
       bleKeyboard.click(MOUSE_LEFT);
-    } 
+    }
   }
 
   //RIGHT CLICK
   if (r == 2 && c == 2) {
     if (pinValue == LOW) {
       bleKeyboard.click(MOUSE_RIGHT);
-    } 
+    }
   }
 }
 
@@ -223,7 +246,7 @@ boolean isCtrl() {
   return false;
 }
 
-void initArray() {
+void initKeyArray() {
   for (int r = 0; r < ROWS ; r++) {
     for (int c = 0; c < COLS; c++) {
       key[r][c] = HIGH;
