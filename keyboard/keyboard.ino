@@ -34,11 +34,17 @@ boolean startFlash = true;
 unsigned long previousMillis = 0;
 unsigned long mouseMillis = 0;
 long interval = 500;
-long mouseInterval = 50;
-int mouseFactor = 10;
 
 uint8_t ledStatusStored;
-
+int mX = 0;
+int mY = 0;
+long mk_delay = 50;
+long mk_interval = 50;
+int mk_max_speed = 200;
+int mk_time_to_max = 1500;
+int mk_curve = 0;
+int mX_time = 0;
+int mY_time = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -122,14 +128,14 @@ void checkBattery() {
 void initializeConnection() {
   unsigned long currentMillis = millis();
   while (!bleKeyboard.isConnected()) {
-    if (currentMillis - previousMillis > 100) {
-      digitalWrite(numLockPin, scrollFlash);
-      digitalWrite(capsLockPin, scrollFlash);
-      scrollFlash = !scrollFlash;
-      previousMillis = currentMillis;
-    }
+//    if (currentMillis - previousMillis > 100) {
+//      digitalWrite(numLockPin, scrollFlash);
+//      digitalWrite(capsLockPin, scrollFlash);
+//      scrollFlash = !scrollFlash;
+//      previousMillis = currentMillis;
+//    }
   }
-  
+
   checkBattery();
   checkLedStatus();
 }
@@ -151,7 +157,7 @@ void readArray() {
         r = (b * 4 + a);
 
         if (scrollLock && SCROLL_MAP[r][c] != 0) {
-          //MOVE MOUSE
+          //SUM MOUSE INPUT
           handleCursor(r, c);
 
           if (skey[r][c] != pinValue) {
@@ -172,18 +178,25 @@ void readArray() {
             }
           } else {
             //pressing numlock overrides mode mode
-            if(r == 0 && c == 4){
+            if (r == 0 && c == 4) {
               scrollLock = false;
             }
+
+            uint8_t key_code = KEY_CODE_MAP[r][c];
+
             if (pinValue == LOW) {
-              bleKeyboard.press(KEY_CODE_MAP[r][c]);
+              bleKeyboard.press(key_code);
             } else if (pinValue == HIGH) {
-              bleKeyboard.release(KEY_CODE_MAP[r][c]);
+              bleKeyboard.release(key_code);
             }
           }
         }
       }
     }
+  }
+  //combine all mouse inputs then move
+  if (scrollLock) {
+    moveCursor();
   }
 }
 
@@ -206,31 +219,41 @@ void handleClick(int r, int c) {
 void handleCursor(int r, int c) {
   if (pinValue == LOW) {
     if (r == 0 && c == 7)
-      moveMouse(0, -1);
+      mY -= 1;
     if (r == 1 && c == 7)
-      moveMouse(0, 1);
+      mY += 1;
     if (r == 1 && c == 2)
-      moveMouse(-1, 0);
+      mX -= 1;
     if (r == 1 && c == 4)
-      moveMouse(1, 0);
-
-    if (r == 0 && c == 6)
-      moveMouse(-1, -1);
-    if (r == 1 && c == 0)
-      moveMouse(1, -1);
-    if (r == 1 && c == 6)
-      moveMouse(-1, 1);
-    if (r == 2 && c == 0)
-      moveMouse(1, 1);
+      mX += 1;
+    if (r == 0 && c == 6) {
+      mX -= 1;
+      mY -= 1;
+    }
+    if (r == 1 && c == 0) {
+      mX += 1;
+      mY -= 1;
+    }
+    if (r == 1 && c == 6) {
+      mX -= 1;
+      mY += 1;
+    }
+    if (r == 2 && c == 0) {
+      mX += 1;
+      mY += 1;
+    }
   }
 }
 
-void moveMouse(int x, int y) {
+void moveCursor() {
   unsigned long currentMillis = millis();
-  if (currentMillis - mouseMillis > (mouseInterval / (isShift() ? 3 : 1))) {
-    bleKeyboard.move(x * mouseFactor, y * mouseFactor);
+  if (currentMillis - mouseMillis > (mk_interval / (isShift() ? 3 : 1))) {    
+    bleKeyboard.move(mX*10, mY*10);
     mouseMillis = currentMillis;
   }
+  
+  mX = 0;
+  mY = 0;
 }
 
 boolean isShift() {
