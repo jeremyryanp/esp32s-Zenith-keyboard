@@ -4,7 +4,7 @@
 BleMKeyboard bleKeyboard("Zenith Keyboard", "Penntech customs", 100);
 
 #define TEST_MODE false
-#define batteryPin 32
+#define batteryPin 27
 #define capsLockPin 23
 #define numLockPin 15
 #define addr0 17
@@ -64,6 +64,7 @@ void initGPIOPins() {
   pinMode(addr1, OUTPUT);
   pinMode(demuxChip, OUTPUT);
   pinMode(demuxBank, OUTPUT);
+  pinMode(batteryPin, INPUT);
 }
 
 void loop() {
@@ -71,15 +72,18 @@ void loop() {
     initializeConnection();
   } else {
     readArray();
-    checkMouseMode();
-    checkLedStatus();
+    checkTimedEvents();
   }
 }
 
 // Mouse mode uses the scroll lock key to use the numpad as a crude mouse
-void checkMouseMode() {
+void checkTimedEvents() {
+  checkLedStatus();
+
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillis > interval) {
+    checkBattery();
+
     //flash scroll lock for mouse mode
     if (scrollLock) {
       digitalWrite(numLockPin, scrollFlash);
@@ -109,6 +113,13 @@ int getBatteryPct() {
   float voltage = (sensorValue * (3.3 / 4095.0) - 1.2) * 2; //Convert to true voltage
   int percentage = map(voltage , 3.27, 4.20 , 0 , 100);
 
+//  Serial.print("sensorValue ");
+//  Serial.println(sensorValue);
+//  Serial.print("voltage ");
+//  Serial.println(voltage);
+//  Serial.print("percentage ");
+//  Serial.println(percentage);
+
   if (voltage < 3.3) {
     return 0;
   } else if (voltage > 4.2) {
@@ -128,12 +139,12 @@ void checkBattery() {
 void initializeConnection() {
   unsigned long currentMillis = millis();
   while (!bleKeyboard.isConnected()) {
-//    if (currentMillis - previousMillis > 100) {
-//      digitalWrite(numLockPin, scrollFlash);
-//      digitalWrite(capsLockPin, scrollFlash);
-//      scrollFlash = !scrollFlash;
-//      previousMillis = currentMillis;
-//    }
+    //    if (currentMillis - previousMillis > 100) {
+    //      digitalWrite(numLockPin, scrollFlash);
+    //      digitalWrite(capsLockPin, scrollFlash);
+    //      scrollFlash = !scrollFlash;
+    //      previousMillis = currentMillis;
+    //    }
   }
 
   checkBattery();
@@ -247,11 +258,11 @@ void handleCursor(int r, int c) {
 
 void moveCursor() {
   unsigned long currentMillis = millis();
-  if (currentMillis - mouseMillis > (mk_interval / (isShift() ? 3 : 1))) {    
-    bleKeyboard.move(mX*10, mY*10);
+  if (currentMillis - mouseMillis > (mk_interval / (isShift() ? 3 : 1))) {
+    bleKeyboard.move(mX * 10, mY * 10);
     mouseMillis = currentMillis;
   }
-  
+
   mX = 0;
   mY = 0;
 }
